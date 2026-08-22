@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <unordered_set>
 
+#include "external/dex1_device.hpp"
 #include "legged_rl_deploy/motion/local_mimic_adapter.h"
 #include "legged_rl_deploy/motion/redis_mimic_adapter.h"
 #include "legged_rl_deploy/policy/policy_factory.h"
@@ -45,8 +46,10 @@ size_t maxLag(const std::vector<size_t>& lags) {
 } // namespace
 
 PolicySlot::PolicySlot(const std::string& name, const YAML::Node& policyNode,
-                       const LeggedModel& model, rclcpp::Node& node)
-    : name_(name), policyNode_(policyNode), robot_model_(model), node_(node) {}
+                       const LeggedModel& model, rclcpp::Node& node,
+                       Dex1Device* dex1_device)
+    : name_(name), policyNode_(policyNode), robot_model_(model), node_(node),
+      dex1_device_(dex1_device) {}
 
 void PolicySlot::init() {
   const auto& pnode = policyNode_;
@@ -67,13 +70,13 @@ void PolicySlot::init() {
             << std::endl;
 
   input_buf_.assign(input_dim_, 0.0f);
-  output_buf_.assign(output_dim_, 0.0f);
   raw_output_.assign(output_dim_, 0.0f);
 
   policy_dt_ = pnode["policy_dt"].as<float>(0.02f);
   joint_ids_map_ = pnode["joint_ids_map"].as<std::vector<size_t>>();
   stiffness_ = pnode["stiffness"].as<std::vector<float>>();
   damping_ = pnode["damping"].as<std::vector<float>>();
+  output_buf_.assign(joint_ids_map_.size(), 0.0f);
   last_action_.assign(output_dim_, 0.0f);
 
   if (pnode["commands"]) {
@@ -137,6 +140,17 @@ void PolicySlot::init() {
   computeTermHistoryCapacities();
   initMimicSource();
   initExternalInputs();
+  if (has_dex1_input_) {
+    dex1_action_.assign(kDex1Dof, 0.0f);
+  }
+  const size_t required_dim =
+      joint_ids_map_.size() + (has_dex1_input_ ? dex1_action_.size() : 0);
+  const bool invalid_dim = has_dex1_input_ ? output_dim_ != required_dim
+                                           : output_dim_ < required_dim;
+  if (invalid_dim) {
+    throw std::runtime_error("[PolicySlot:" + name_ +
+                             "] model action dimension does not match required outputs");
+  }
 
   std::cout << "[PolicySlot:" << name_ << "] init done. input_dim=" << input_dim_
             << " output_dim=" << output_dim_ << std::endl;
@@ -154,19 +168,14 @@ void PolicySlot::reset(const LeggedState& state) {
   has_valid_output_ = false;
   policy_runner_->reset();
 
-  if (output_buf_.size() != output_dim_) {
-    output_buf_.assign(output_dim_, 0.0f);
-  }
   const auto& q = state.joint_pos();
-  for (size_t i = 0; i < output_dim_; ++i) {
-    if (i < joint_ids_map_.size()) {
-      const size_t j = joint_ids_map_[i];
-      if (j < static_cast<size_t>(q.size())) {
-        output_buf_[i] = static_cast<float>(q[j]);
-        continue;
-      }
+  for (size_t i = 0; i < joint_ids_map_.size(); ++i) {
+    const size_t j = joint_ids_map_[i];
+    if (j < static_cast<size_t>(q.size())) {
+      output_buf_[i] = static_cast<float>(q[j]);
+      continue;
     }
-    output_buf_[i] = 0.0f; 
+    output_buf_[i] = 0.0f;
   }
 
   if (mimic_source_) {
@@ -469,6 +478,7 @@ void PolicySlot::initExternalInputs() {
   runtime_inputs_.clear();
   external_input_buffers_.clear();
   external_inputs_.clear();
+  has_dex1_input_ = false;
 
   const YAML::Node configs = policyNode_["external_inputs"];
   std::unordered_set<std::string> configured_names;
@@ -490,14 +500,28 @@ void PolicySlot::initExternalInputs() {
                                "] missing external_inputs." + external_name);
     }
     configured_names.emplace(external_name);
-    auto inserted = external_input_buffers_.emplace(
-        input.source, std::vector<float>(input.size, 0.0f));
-    external_inputs_.emplace(
-        input.source,
-        std::make_unique<RosImageTensorInput>(node_, input.source, config,
-                                               input.shape));
-    runtime_inputs_.push_back(
-        {input.source, inserted.first->second.data(), inserted.first->second.size()});
+    if (external_name == "dex1") {
+      if (!dex1_device_) {
+        throw std::runtime_error("[PolicySlot:" + name_ +
+                                 "] external.dex1 requires a top-level dex1 device");
+      }
+      if (input.size != kDex1InputDim) {
+        throw std::runtime_error("[PolicySlot:" + name_ +
+                                 "] external.dex1 must have six values");
+      }
+      has_dex1_input_ = true;
+      runtime_inputs_.push_back(
+          {input.source, dex1_input_.data(), dex1_input_.size()});
+    } else {
+      auto inserted = external_input_buffers_.emplace(
+          input.source, std::vector<float>(input.size, 0.0f));
+      external_inputs_.emplace(
+          input.source,
+          std::make_unique<RosImageTensorInput>(node_, input.source, config,
+                                                 input.shape));
+      runtime_inputs_.push_back(
+          {input.source, inserted.first->second.data(), inserted.first->second.size()});
+    }
   }
 
   if (configs) {
@@ -794,23 +818,27 @@ void PolicySlot::updatePolicy(const LeggedState& state,
   for (auto& external : external_inputs_) {
     external.second->read(external_input_buffers_.at(external.first));
   }
-  for (auto& input : runtime_inputs_) {
-    if (input.source == "observations") {
-      input.data = input_buf_.data();
-    } else {
-      const auto& buffer = external_input_buffers_.at(input.source);
-      input.data = buffer.data();
-      input.size = buffer.size();
-    }
+  if (has_dex1_input_) {
+    dex1_device_->read(dex1_input_);
   }
   policy_runner_->infer(runtime_inputs_, raw_output_.data());
-
   last_action_ = raw_output_;
-  output_buf_ = raw_output_;
-  has_valid_output_ = true;
+  std::copy_n(raw_output_.begin(), joint_ids_map_.size(), output_buf_.begin());
 
   auto it = actions_.find("JointPositionAction");
   if (it != actions_.end()) it->second.process(output_buf_);
+
+  if (has_dex1_input_) {
+    std::copy_n(raw_output_.begin() + joint_ids_map_.size(), dex1_action_.size(),
+                dex1_action_.begin());
+    actions_.at("Dex1Action").process(dex1_action_);
+    if (dex1_device_->isPositionMode()) {
+      dex1_device_->publishPosition(dex1_action_);
+    } else {
+      dex1_device_->publishTorque(dex1_action_);
+    }
+  }
+  has_valid_output_ = true;
 }
 
 void PolicySlot::update(const LeggedState& state,

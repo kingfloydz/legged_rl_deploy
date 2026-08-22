@@ -37,6 +37,7 @@ add_library(${PROJECT_NAME}
     src/policy/i_policy_runner.cpp
     src/policy/policy_factory.cpp
     src/external/ros_image_tensor_input.cpp
+    src/external/dex1_device.cpp
     src/policy_slot.cpp
     src/legged_rl_deploy.cpp
     src/motion/cnpy.cpp
@@ -177,10 +178,12 @@ if(ament_cmake_FOUND)
   message(STATUS "Found ament_cmake")
   find_package(rclcpp REQUIRED)
   find_package(sensor_msgs REQUIRED)
+  find_package(unitree_go REQUIRED)
 
   ament_target_dependencies(${PROJECT_NAME}
     rclcpp
     sensor_msgs
+    unitree_go
   )
 
   # 安装已有可执行文件
@@ -205,7 +208,7 @@ if(ament_cmake_FOUND)
 
   # 这两行让 ament 生态下的下游也能拿到 targets/依赖（推荐）
   ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-  ament_export_dependencies(unitree_lowlevel legged_base rclcpp sensor_msgs)
+  ament_export_dependencies(unitree_lowlevel legged_base rclcpp sensor_msgs unitree_go)
 
   ament_package()
 endif()

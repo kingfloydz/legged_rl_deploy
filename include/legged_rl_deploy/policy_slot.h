@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <deque>
 #include <memory>
 #include <optional>
@@ -20,10 +21,13 @@
 
 namespace legged_rl_deploy {
 
+class Dex1Device;
+
 class PolicySlot {
 public:
   PolicySlot(const std::string& name, const YAML::Node& policyNode,
-             const LeggedModel& model, rclcpp::Node& node);
+             const LeggedModel& model, rclcpp::Node& node,
+             Dex1Device* dex1_device = nullptr);
 
   void init();
   void reset(const LeggedState& state);
@@ -106,10 +110,13 @@ private:
   std::vector<float> input_buf_;
   std::vector<float> output_buf_;
   std::vector<float> raw_output_;
+  std::array<float, 6> dex1_input_{};
+  std::vector<float> dex1_action_;
   std::vector<RuntimeTensor> runtime_inputs_;
   std::unordered_map<std::string, std::vector<float>> external_input_buffers_;
-  std::unordered_map<std::string, std::unique_ptr<RosImageTensorInput>>
-      external_inputs_;
+  std::unordered_map<std::string, std::unique_ptr<RosImageTensorInput>> external_inputs_;
+  bool has_dex1_input_ = false;
+  Dex1Device* dex1_device_ = nullptr;
 
   float policy_dt_ = 0.02f;
   std::vector<size_t> joint_ids_map_;

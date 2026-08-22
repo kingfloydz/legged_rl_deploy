@@ -12,11 +12,16 @@
 
 namespace legged_rl_deploy {
 
+class Dex1Device;
+
 class LeggedRLDeploy : public LowLevelController {
 public:
   LeggedRLDeploy(std::string configFile);
+  ~LeggedRLDeploy();
 
 private:
+  void updateFixStand() override;
+  void updateGripperLoading() override;
   void initHighController() override;
   void resetHighController() override;
   void updateHighController() override;
@@ -37,6 +42,9 @@ private:
 
   // -------- backward compat: single-policy mode --------
   bool single_mode_ = false;
+
+  // -------- optional Dex1-1 device --------
+  std::unique_ptr<Dex1Device> dex1_;
 };
 
 } // namespace legged_rl_deploy

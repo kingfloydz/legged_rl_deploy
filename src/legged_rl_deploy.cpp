@@ -1,4 +1,5 @@
 #include "legged_rl_deploy/legged_rl_deploy.h"
+#include "external/dex1_device.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -112,6 +113,20 @@ LeggedRLDeploy::LeggedRLDeploy(std::string configFile) {
   std::cout << "[LeggedRLDeploy] Load config from " << configFile << std::endl;
 }
 
+LeggedRLDeploy::~LeggedRLDeploy() = default;
+
+void LeggedRLDeploy::updateFixStand() {
+  if (dex1_) {
+    dex1_->publishPosition({3.2f, 3.2f});
+  }
+}
+
+void LeggedRLDeploy::updateGripperLoading() {
+  if (dex1_) {
+    dex1_->publishTorque({-40.0f, -40.0f});
+  }
+}
+
 // ===========================================================================
 // switchToPolicy
 // ===========================================================================
@@ -142,6 +157,18 @@ void LeggedRLDeploy::initHighController() {
   if (configNode_["tau_max"]) {
     robot_model_.setTauMaxOrder(legged_base::yamlToEigenVec(configNode_["tau_max"]));
   }
+  if (configNode_["dex1"]) {
+    dex1_ = std::make_unique<Dex1Device>(configNode_["dex1"], *this);
+    std::cout << "[LeggedRLDeploy] Dex1-1 enabled." << std::endl;
+  }
+
+  const auto createSlot =
+      [this](const std::string& name, const YAML::Node& policy_node) {
+        auto slot = std::make_unique<PolicySlot>(
+            name, policy_node, robot_model_, *this, dex1_.get());
+        slot->init();
+        return slot;
+      };
 
   // ------------------------------------------------------------------
   // Detect mode: fsm (multi-policy) vs. policy (single, backward compat)
@@ -186,9 +213,7 @@ void LeggedRLDeploy::initHighController() {
       }
       applyPolicyFileOverrides(pname, entry, policyNode);
 
-      auto slot =
-          std::make_unique<PolicySlot>(pname, policyNode, robot_model_, *this);
-      slot->init();
+      auto slot = createSlot(pname, policyNode);
       slots_.emplace(pname, std::move(slot));
 
       // --- forward transitions to GamepadFSM YAML ---
@@ -219,9 +244,7 @@ void LeggedRLDeploy::initHighController() {
     // ======== single-policy mode (backward compatible) ========
     single_mode_ = true;
     const std::string pname = "default";
-    auto slot = std::make_unique<PolicySlot>(
-        pname, configNode_["policy"], robot_model_, *this);
-    slot->init();
+    auto slot = createSlot(pname, configNode_["policy"]);
     active_name_ = pname;
     active_slot_ = slot.get();
     slots_.emplace(pname, std::move(slot));
@@ -274,7 +297,7 @@ void LeggedRLDeploy::updateHighController() {
   const auto& jmap = active_slot_->jointIdsMap();
   const auto& kp = active_slot_->stiffness();
   const auto& kd = active_slot_->damping();
-  const size_t n = active_slot_->outputDim();
+  const size_t n = jmap.size();
 
   for (size_t i = 0; i < n; ++i) {
     const size_t j = jmap[i];
