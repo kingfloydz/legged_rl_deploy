@@ -36,6 +36,7 @@ class Dex1Device final {
   std::array<float, kDex1Dof> velocity_{};
   std::array<float, kDex1Dof> torque_{};
   ActionMode action_mode_ = ActionMode::Torque;
+  float torque_limit_nm_ = 125.0f;
   std::array<float, kDex1Dof> kp_{5.0f, 5.0f};
   std::array<float, kDex1Dof> kd_{0.1f, 0.1f};
   std::array<rclcpp::Publisher<Command>::SharedPtr, kDex1Dof> publishers_{};

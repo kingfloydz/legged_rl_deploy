@@ -35,6 +35,8 @@ public:
   void load(const std::string& model_path, const YAML::Node& policy_node);
   void infer(const std::vector<RuntimeTensor>& runtime_inputs, float* actions);
   void reset();
+  void initializeState(const std::string& name, const float* frame,
+                       size_t frame_size);
 
   size_t actionDim() const { return action_dim_; }
   size_t observationDim() const;

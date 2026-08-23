@@ -90,6 +90,7 @@ private:
   void updatePolicy(const LeggedState& state,
                     const unitree::common::Gamepad& gamepad, size_t loop_cnt,
                     double ll_dt);
+  void initializeHistoryFromCurrentFrame();
   const ObsTerm& getObsTermByName(const std::string& name) const;
   static ObsOrderSpec parseOrderSpec(const YAML::Node& node);
   static std::vector<size_t> resolveLags(const ObsOrderSpec& spec, size_t length);
@@ -149,6 +150,8 @@ private:
   YAML::Node mimic_params_;
   std::unique_ptr<IMimicSource> mimic_source_;
   bool has_valid_output_ = false;
+  bool repeat_first_history_ = false;
+  bool history_warmup_pending_ = false;
 };
 
 } // namespace legged_rl_deploy

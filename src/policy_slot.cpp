@@ -16,6 +16,10 @@ namespace legged_rl_deploy {
 
 namespace {
 
+constexpr std::array<float, 4> kDex1ObservationScale{
+    1.0f / 1.08f, 1.0f / 1.08f,
+    1.0f / 125.0f, 1.0f / 125.0f};
+
 std::vector<float> quatToRpy(const Eigen::Quaterniond& q_in) {
   const double x = q_in.x();
   const double y = q_in.y();
@@ -60,6 +64,11 @@ void PolicySlot::init() {
 
   policy_runner_ = makePolicyRunner(backend);
   policy_runner_->load(model_path, pnode);
+  const YAML::Node states = pnode["model"]["states"];
+  repeat_first_history_ =
+      states && states["history"] &&
+      states["history"]["initialization"].as<std::string>("zeros") ==
+          "repeat_first";
   input_dim_ = policy_runner_->observationDim();
   output_dim_ = policy_runner_->actionDim();
   if (input_dim_ == 0) {
@@ -94,14 +103,15 @@ void PolicySlot::init() {
       const YAML::Node rate_limit = base_velocity["rate_limit"];
       if (rate_limit) {
         velocity_rate_limit_ = rate_limit.as<std::vector<float>>();
-        if (velocity_rate_limit_.size() != 3 ||
+        if ((velocity_rate_limit_.size() != 2 &&
+             velocity_rate_limit_.size() != 3) ||
             std::any_of(velocity_rate_limit_.begin(), velocity_rate_limit_.end(),
                         [](float value) {
                           return !std::isfinite(value) || value <= 0.0f;
                         })) {
           throw std::runtime_error(
               "[PolicySlot:" + name_ +
-              "] base_velocity.rate_limit must contain three finite positive values");
+              "] base_velocity.rate_limit must contain two or three finite positive values");
         }
       }
     }
@@ -136,6 +146,18 @@ void PolicySlot::init() {
   }
 
   registryObsTerms(observations["terms"]);
+  for (const auto& term : obs_terms_) {
+    if (term.name == "velocity_commands") {
+      velocity_command_.assign(term.dim, 0.0f);
+      if (!velocity_rate_limit_.empty() &&
+          velocity_rate_limit_.size() != velocity_command_.size()) {
+        throw std::runtime_error(
+            "[PolicySlot:" + name_ +
+            "] base_velocity.rate_limit dimension must match velocity_commands");
+      }
+      break;
+    }
+  }
   parseAssemble(observations);
   computeTermHistoryCapacities();
   initMimicSource();
@@ -166,6 +188,7 @@ void PolicySlot::reset(const LeggedState& state) {
   for (auto& now : term_now_) std::fill(now.begin(), now.end(), 0.0f);
   for (auto& hist : term_hist_) hist.clear();
   has_valid_output_ = false;
+  history_warmup_pending_ = repeat_first_history_;
   policy_runner_->reset();
 
   const auto& q = state.joint_pos();
@@ -315,7 +338,13 @@ void PolicySlot::calculateObsTerm(ObsTerm& term) {
   if (term.name == "projected_gravity") term.dim = 3;
   if (term.name == "eulerZYX_rpy") term.dim = 3;
   if (term.name == "roll_pitch") term.dim = 2;
-  if (term.name == "velocity_commands") term.dim = 3;
+  if (term.name == "velocity_commands") {
+    term.dim = term.params["dim"].as<size_t>(3);
+    if (term.dim != 2 && term.dim != 3) {
+      throw std::runtime_error("[PolicySlot:" + name_ +
+                               "] velocity_commands dim must be 2 or 3");
+    }
+  }
   if (term.name == "joint_pos") term.dim = robot_model_.nJoints();
   if (term.name == "joint_vel") term.dim = robot_model_.nJoints();
   if (term.name == "last_action") term.dim = output_dim_;
@@ -541,7 +570,12 @@ void PolicySlot::initExternalInputs() {
 
 void PolicySlot::updateVelocityCommand(
     const unitree::common::Gamepad& gamepad) {
-  std::vector<float> target{gamepad.ly, -gamepad.lx, -gamepad.rx};
+  std::vector<float> target;
+  if (velocity_command_.size() == 2) {
+    target = {gamepad.ly, -gamepad.rx};
+  } else {
+    target = {gamepad.ly, -gamepad.lx, -gamepad.rx};
+  }
   const auto processor = commands_.find("base_velocity");
   if (processor != commands_.end()) processor->second.process(target);
 
@@ -625,10 +659,11 @@ void PolicySlot::assembleObsFrame(const LeggedState& state,
             "] gait_phase_2 cycle_time must be finite and positive");
       }
 
-      const float command_norm = std::sqrt(
-          velocity_command_[0] * velocity_command_[0] +
-          velocity_command_[1] * velocity_command_[1] +
-          velocity_command_[2] * velocity_command_[2]);
+      float command_norm_squared = 0.0f;
+      for (const float command : velocity_command_) {
+        command_norm_squared += command * command;
+      }
+      const float command_norm = std::sqrt(command_norm_squared);
 
       const bool is_moving =
           command_threshold < 0.0f || command_norm >= command_threshold;
@@ -821,6 +856,10 @@ void PolicySlot::updatePolicy(const LeggedState& state,
   if (has_dex1_input_) {
     dex1_device_->read(dex1_input_);
   }
+  if (history_warmup_pending_) {
+    initializeHistoryFromCurrentFrame();
+    history_warmup_pending_ = false;
+  }
   policy_runner_->infer(runtime_inputs_, raw_output_.data());
   last_action_ = raw_output_;
   std::copy_n(raw_output_.begin(), joint_ids_map_.size(), output_buf_.begin());
@@ -839,6 +878,32 @@ void PolicySlot::updatePolicy(const LeggedState& state,
     }
   }
   has_valid_output_ = true;
+}
+
+void PolicySlot::initializeHistoryFromCurrentFrame() {
+  const size_t expected_frame_size = has_dex1_input_ ? 101 : input_buf_.size();
+  std::vector<float> frame;
+  frame.reserve(expected_frame_size);
+
+  if (has_dex1_input_) {
+    if (input_buf_.size() < 66) {
+      throw std::runtime_error("observations are too small for Dex1 history initialization");
+    }
+    frame.insert(frame.end(), input_buf_.begin(), input_buf_.begin() + 66);
+    for (size_t i = 2; i < dex1_input_.size(); ++i) {
+      frame.push_back(dex1_input_[i] * kDex1ObservationScale[i - 2]);
+    }
+    frame.insert(frame.end(), input_buf_.begin() + 66, input_buf_.end());
+  } else {
+    frame = input_buf_;
+  }
+
+  if (frame.size() != expected_frame_size) {
+    throw std::runtime_error(
+        "policy history frame size does not match its observation contract");
+  }
+
+  policy_runner_->initializeState("history", frame.data(), frame.size());
 }
 
 void PolicySlot::update(const LeggedState& state,

@@ -85,9 +85,9 @@ void IPolicyRunner::parseContract(const YAML::Node& policy_node) {
         }
         const std::string initialization =
             spec["initialization"].as<std::string>("zeros");
-        if (initialization != "zeros") {
+        if (initialization != "zeros" && initialization != "repeat_first") {
           throw std::runtime_error("policy.model.states." + name +
-                                   ".initialization must be zeros");
+                                   ".initialization must be zeros or repeat_first");
         }
         StateBuffer state;
         state.shape = loadShape(spec["shape"], "policy.model.states." + name);
@@ -351,6 +351,27 @@ void IPolicyRunner::reset() {
     std::fill(entry.second.next.begin(), entry.second.next.end(), 0.0f);
   }
   resetBackend();
+}
+
+void IPolicyRunner::initializeState(const std::string& name,
+                                    const float* frame, size_t frame_size) {
+  if (!loaded_) throw std::runtime_error("policy runner is not loaded");
+  if (!frame || frame_size == 0) {
+    throw std::runtime_error("state initialization frame is empty");
+  }
+  const auto it = states_.find(name);
+  if (it == states_.end()) {
+    throw std::runtime_error("unknown policy state " + name);
+  }
+  StateBuffer& state = it->second;
+  if (state.current.size() % frame_size != 0) {
+    throw std::runtime_error("state " + name +
+                             " cannot be initialized from the supplied frame");
+  }
+  for (size_t offset = 0; offset < state.current.size(); offset += frame_size) {
+    std::copy(frame, frame + frame_size, state.current.begin() + offset);
+    std::copy(frame, frame + frame_size, state.next.begin() + offset);
+  }
 }
 
 size_t IPolicyRunner::observationDim() const {

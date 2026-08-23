@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@ constexpr std::array<const char*, kDex1Dof> kDefaultCommandTopics{
     "rt/dex1/left/cmd", "rt/dex1/right/cmd"};
 constexpr std::array<const char*, kDex1Dof> kDefaultStateTopics{
     "rt/dex1/left/state", "rt/dex1/right/state"};
+constexpr float kDex1ReductionRatio = 25.0f;
 
 }  // namespace
 
@@ -27,6 +29,13 @@ Dex1Device::Dex1Device(const YAML::Node& config, rclcpp::Node& node) {
     throw std::runtime_error(
         "dex1.action_mode must be either position or torque");
   }
+
+  const float motor_torque_limit_nm =
+      config["torque_limit_nm"].as<float>(5.0f);
+  if (!std::isfinite(motor_torque_limit_nm) || motor_torque_limit_nm <= 0.0f) {
+    throw std::runtime_error("dex1.torque_limit_nm must be finite and positive");
+  }
+  torque_limit_nm_ = motor_torque_limit_nm * kDex1ReductionRatio;
 
   if (config["kp"] || config["kd"]) {
     const auto kp = config["kp"].as<std::vector<float>>();
@@ -103,7 +112,7 @@ void Dex1Device::publishTorque(const std::vector<float>& values) {
     auto& motor = command_messages_[side].cmds[0];
     motor.q = 0.0f;
     motor.dq = 0.0f;
-    motor.tau = values[side];
+    motor.tau = std::clamp(values[side], -torque_limit_nm_, torque_limit_nm_);
     motor.kp = 0.0f;
     motor.kd = 0.0f;
     publishers_[side]->publish(command_messages_[side]);
