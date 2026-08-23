@@ -56,6 +56,7 @@ protected:
 private:
   struct StateBuffer {
     std::vector<int64_t> shape;
+    std::vector<float> initial;
     std::vector<float> current;
     std::vector<float> next;
     float max_norm = 0.0f;

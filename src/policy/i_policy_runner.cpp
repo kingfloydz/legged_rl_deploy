@@ -85,15 +85,37 @@ void IPolicyRunner::parseContract(const YAML::Node& policy_node) {
         }
         const std::string initialization =
             spec["initialization"].as<std::string>("zeros");
-        if (initialization != "zeros" && initialization != "repeat_first") {
+        if (initialization != "zeros" && initialization != "repeat_first" &&
+            initialization != "reset_pose") {
           throw std::runtime_error("policy.model.states." + name +
-                                   ".initialization must be zeros or repeat_first");
+                                   ".initialization must be zeros, repeat_first, "
+                                   "or reset_pose");
         }
         StateBuffer state;
         state.shape = loadShape(spec["shape"], "policy.model.states." + name);
         const size_t size = tensorSize(state.shape, "policy.model.states." + name);
-        state.current.assign(size, 0.0f);
-        state.next.assign(size, 0.0f);
+        state.initial.assign(size, 0.0f);
+        if (initialization == "reset_pose") {
+          if (!spec["reset_frame"] || !spec["reset_frame"].IsSequence()) {
+            throw std::runtime_error("policy.model.states." + name +
+                                     ".reset_frame must be a sequence");
+          }
+          const auto frame = spec["reset_frame"].as<std::vector<float>>();
+          if (frame.empty() || size % frame.size() != 0) {
+            throw std::runtime_error("policy.model.states." + name +
+                                     ".reset_frame size must divide state size");
+          }
+          if (!std::all_of(frame.begin(), frame.end(),
+                           [](float value) { return std::isfinite(value); })) {
+            throw std::runtime_error("policy.model.states." + name +
+                                     ".reset_frame contains NaN/Inf");
+          }
+          for (size_t offset = 0; offset < size; offset += frame.size()) {
+            std::copy(frame.begin(), frame.end(), state.initial.begin() + offset);
+          }
+        }
+        state.current = state.initial;
+        state.next = state.initial;
         state.max_norm = spec["max_norm"].as<float>(0.0f);
         if (state.max_norm < 0.0f || !std::isfinite(state.max_norm)) {
           throw std::runtime_error("policy.model.states." + name +
@@ -347,8 +369,8 @@ void IPolicyRunner::infer(const std::vector<RuntimeTensor>& runtime_inputs,
 void IPolicyRunner::reset() {
   if (!loaded_) return;
   for (auto& entry : states_) {
-    std::fill(entry.second.current.begin(), entry.second.current.end(), 0.0f);
-    std::fill(entry.second.next.begin(), entry.second.next.end(), 0.0f);
+    entry.second.current = entry.second.initial;
+    entry.second.next = entry.second.initial;
   }
   resetBackend();
 }
