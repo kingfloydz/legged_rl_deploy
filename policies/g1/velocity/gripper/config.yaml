@@ -7,11 +7,11 @@ dex1:
   kp: [5.0, 5.0]
   kd: [0.1, 0.1]
   command_topics:
-    left: rt/dex1/left/cmd
-    right: rt/dex1/right/cmd
+    left: dex1/left/cmd
+    right: dex1/right/cmd
   state_topics:
-    left: rt/dex1/left/state
-    right: rt/dex1/right/state
+    left: dex1/left/state
+    right: dex1/right/state
 
 policy:
   backend: ort
