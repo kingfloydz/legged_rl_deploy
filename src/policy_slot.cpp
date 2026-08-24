@@ -20,7 +20,7 @@ constexpr std::array<float, 4> kDex1ObservationScale{
     1.0f / 1.08f, 1.0f / 1.08f,
     1.0f / 125.0f, 1.0f / 125.0f};
 constexpr std::array<float, 6> kDex1ObservationScaleWithPosition{
-    1.0f / 5.4f, 1.0f / 5.4f, 1.0f / 1.08f, 1.0f / 1.08f,
+    1.0f / 3.58f, 1.0f / 3.58f, 1.0f / 1.08f, 1.0f / 1.08f,
     1.0f / 125.0f, 1.0f / 125.0f};
 
 std::vector<float> quatToRpy(const Eigen::Quaterniond& q_in) {
@@ -902,7 +902,9 @@ void PolicySlot::initializeHistoryFromCurrentFrame() {
     frame.insert(frame.end(), input_buf_.begin(), input_buf_.begin() + 66);
     if (expected_frame_size == 103) {
       for (size_t i = 0; i < dex1_input_.size(); ++i) {
-        frame.push_back(dex1_input_[i] * kDex1ObservationScaleWithPosition[i]);
+        frame.push_back(
+            (dex1_input_[i] - (i < kDex1Dof ? 1.697f : 0.0f)) *
+            kDex1ObservationScaleWithPosition[i]);
       }
     } else if (expected_frame_size == 101) {
       for (size_t i = 2; i < dex1_input_.size(); ++i) {
