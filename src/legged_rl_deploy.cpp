@@ -117,7 +117,7 @@ LeggedRLDeploy::~LeggedRLDeploy() = default;
 
 void LeggedRLDeploy::updateFixStand() {
   if (dex1_) {
-    dex1_->publishPosition({3.2f, 3.2f});
+    dex1_->publishPosition({3.8f, 3.8f});
   }
 }
 
