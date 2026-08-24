@@ -152,6 +152,7 @@ private:
   bool has_valid_output_ = false;
   bool repeat_first_history_ = false;
   bool history_warmup_pending_ = false;
+  size_t history_frame_dim_ = 0;
 };
 
 } // namespace legged_rl_deploy

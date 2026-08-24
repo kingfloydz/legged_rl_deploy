@@ -19,6 +19,9 @@ namespace {
 constexpr std::array<float, 4> kDex1ObservationScale{
     1.0f / 1.08f, 1.0f / 1.08f,
     1.0f / 125.0f, 1.0f / 125.0f};
+constexpr std::array<float, 6> kDex1ObservationScaleWithPosition{
+    1.0f / 5.4f, 1.0f / 5.4f, 1.0f / 1.08f, 1.0f / 1.08f,
+    1.0f / 125.0f, 1.0f / 125.0f};
 
 std::vector<float> quatToRpy(const Eigen::Quaterniond& q_in) {
   const double x = q_in.x();
@@ -65,9 +68,13 @@ void PolicySlot::init() {
   policy_runner_ = makePolicyRunner(backend);
   policy_runner_->load(model_path, pnode);
   const YAML::Node states = pnode["model"]["states"];
+  const YAML::Node history = states ? states["history"] : YAML::Node();
+  if (history && history["shape"] && history["shape"].IsSequence() &&
+      history["shape"].size() == 3) {
+    history_frame_dim_ = history["shape"][2].as<size_t>();
+  }
   repeat_first_history_ =
-      states && states["history"] &&
-      states["history"]["initialization"].as<std::string>("zeros") ==
+      history && history["initialization"].as<std::string>("zeros") ==
           "repeat_first";
   input_dim_ = policy_runner_->observationDim();
   output_dim_ = policy_runner_->actionDim();
@@ -188,8 +195,8 @@ void PolicySlot::reset(const LeggedState& state) {
   for (auto& now : term_now_) std::fill(now.begin(), now.end(), 0.0f);
   for (auto& hist : term_hist_) hist.clear();
   has_valid_output_ = false;
-  history_warmup_pending_ = repeat_first_history_;
   policy_runner_->reset();
+  history_warmup_pending_ = repeat_first_history_;
 
   const auto& q = state.joint_pos();
   for (size_t i = 0; i < joint_ids_map_.size(); ++i) {
@@ -881,7 +888,10 @@ void PolicySlot::updatePolicy(const LeggedState& state,
 }
 
 void PolicySlot::initializeHistoryFromCurrentFrame() {
-  const size_t expected_frame_size = has_dex1_input_ ? 101 : input_buf_.size();
+  const size_t expected_frame_size =
+      history_frame_dim_ != 0
+          ? history_frame_dim_
+          : (has_dex1_input_ ? 101 : input_buf_.size());
   std::vector<float> frame;
   frame.reserve(expected_frame_size);
 
@@ -890,8 +900,17 @@ void PolicySlot::initializeHistoryFromCurrentFrame() {
       throw std::runtime_error("observations are too small for Dex1 history initialization");
     }
     frame.insert(frame.end(), input_buf_.begin(), input_buf_.begin() + 66);
-    for (size_t i = 2; i < dex1_input_.size(); ++i) {
-      frame.push_back(dex1_input_[i] * kDex1ObservationScale[i - 2]);
+    if (expected_frame_size == 103) {
+      for (size_t i = 0; i < dex1_input_.size(); ++i) {
+        frame.push_back(dex1_input_[i] * kDex1ObservationScaleWithPosition[i]);
+      }
+    } else if (expected_frame_size == 101) {
+      for (size_t i = 2; i < dex1_input_.size(); ++i) {
+        frame.push_back(dex1_input_[i] * kDex1ObservationScale[i - 2]);
+      }
+    } else {
+      throw std::runtime_error(
+          "Dex1 policy history must have 101 or 103 values");
     }
     frame.insert(frame.end(), input_buf_.begin() + 66, input_buf_.end());
   } else {

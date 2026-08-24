@@ -140,6 +140,30 @@
         "ROS2: Policies"
       ],
       "problemMatcher": []
+    },
+    {
+      "label": "ROS2:Rickshaw",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "scripts/run.sh",
+        "lo",
+        "${input:RosDistro}",
+        "ros2",
+        "run",
+        "legged_rl_deploy",
+        "legged_rl_deploy_node",
+        "lo",
+        "src/legged_rl_deploy/policies/g1/velocity/rickshaw/config.yaml"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
     }
   ]
 }

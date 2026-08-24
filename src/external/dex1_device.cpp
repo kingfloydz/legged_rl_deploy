@@ -13,9 +13,9 @@ namespace legged_rl_deploy {
 namespace {
 
 constexpr std::array<const char*, kDex1Dof> kDefaultCommandTopics{
-    "rt/dex1/left/cmd", "rt/dex1/right/cmd"};
+    "dex1/left/cmd", "dex1/right/cmd"};
 constexpr std::array<const char*, kDex1Dof> kDefaultStateTopics{
-    "rt/dex1/left/state", "rt/dex1/right/state"};
+    "dex1/left/state", "dex1/right/state"};
 constexpr float kDex1ReductionRatio = 25.0f;
 
 }  // namespace
