@@ -866,22 +866,21 @@ void PolicySlot::updatePolicy(const LeggedState& state,
 
 void PolicySlot::logPolicyFrame(size_t loop_cnt, double ll_dt) {
   CsvLogger& logger = CsvLogger::getInstance();
-  const double time_sec = static_cast<double>(loop_cnt) * ll_dt;
 
   for (size_t i = 0; i < input_buf_.size(); ++i) {
-    logger.update(time_sec, "policy_obs_" + std::to_string(i),
+    logger.update("policy_obs_" + std::to_string(i),
                   static_cast<double>(input_buf_[i]));
   }
   for (size_t i = 0; i < dex1_policy_input_.size(); ++i) {
-    logger.update(time_sec, "policy_dex1_" + std::to_string(i),
+    logger.update("policy_dex1_" + std::to_string(i),
                   static_cast<double>(dex1_policy_input_[i]));
   }
   for (size_t i = 0; i < raw_output_.size(); ++i) {
-    logger.update(time_sec, "policy_output_" + std::to_string(i),
+    logger.update("policy_output_" + std::to_string(i),
                   static_cast<double>(raw_output_[i]));
   }
   for (size_t i = 0; i < output_buf_.size(); ++i) {
-    logger.update(time_sec, "action_output_" + std::to_string(i),
+    logger.update("action_output_" + std::to_string(i),
                   static_cast<double>(output_buf_[i]));
   }
 }
