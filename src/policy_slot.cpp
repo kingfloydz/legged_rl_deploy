@@ -11,17 +11,15 @@
 #include "legged_rl_deploy/motion/redis_mimic_adapter.h"
 #include "legged_rl_deploy/policy/policy_factory.h"
 #include <legged_base/Utils.h>
+#include <logger/CsvLogger.h>
 
 namespace legged_rl_deploy {
 
 namespace {
 
-constexpr std::array<float, 4> kDex1ObservationScale{
+constexpr std::array<float, 2> kDex1ObservationScale{
     1.0f / 1.08f, 1.0f / 1.08f,
-    1.0f / 125.0f, 1.0f / 125.0f};
-constexpr std::array<float, 6> kDex1ObservationScaleWithPosition{
-    1.0f / 3.58f, 1.0f / 3.58f, 1.0f / 1.08f, 1.0f / 1.08f,
-    1.0f / 125.0f, 1.0f / 125.0f};
+};
 
 std::vector<float> quatToRpy(const Eigen::Quaterniond& q_in) {
   const double x = q_in.x();
@@ -169,17 +167,6 @@ void PolicySlot::init() {
   computeTermHistoryCapacities();
   initMimicSource();
   initExternalInputs();
-  if (has_dex1_input_) {
-    dex1_action_.assign(kDex1Dof, 0.0f);
-  }
-  const size_t required_dim =
-      joint_ids_map_.size() + (has_dex1_input_ ? dex1_action_.size() : 0);
-  const bool invalid_dim = has_dex1_input_ ? output_dim_ != required_dim
-                                           : output_dim_ < required_dim;
-  if (invalid_dim) {
-    throw std::runtime_error("[PolicySlot:" + name_ +
-                             "] model action dimension does not match required outputs");
-  }
 
   std::cout << "[PolicySlot:" << name_ << "] init done. input_dim=" << input_dim_
             << " output_dim=" << output_dim_ << std::endl;
@@ -541,13 +528,9 @@ void PolicySlot::initExternalInputs() {
         throw std::runtime_error("[PolicySlot:" + name_ +
                                  "] external.dex1 requires a top-level dex1 device");
       }
-      if (input.size != kDex1InputDim) {
-        throw std::runtime_error("[PolicySlot:" + name_ +
-                                 "] external.dex1 must have six values");
-      }
       has_dex1_input_ = true;
       runtime_inputs_.push_back(
-          {input.source, dex1_input_.data(), dex1_input_.size()});
+          {input.source, dex1_policy_input_.data(), dex1_policy_input_.size()});
     } else {
       auto inserted = external_input_buffers_.emplace(
           input.source, std::vector<float>(input.size, 0.0f));
@@ -861,7 +844,9 @@ void PolicySlot::updatePolicy(const LeggedState& state,
     external.second->read(external_input_buffers_.at(external.first));
   }
   if (has_dex1_input_) {
-    dex1_device_->read(dex1_input_);
+    dex1_device_->read(dex1_state_);
+    dex1_policy_input_[0] = dex1_state_[2];
+    dex1_policy_input_[1] = dex1_state_[3];
   }
   if (history_warmup_pending_) {
     initializeHistoryFromCurrentFrame();
@@ -874,45 +859,44 @@ void PolicySlot::updatePolicy(const LeggedState& state,
   auto it = actions_.find("JointPositionAction");
   if (it != actions_.end()) it->second.process(output_buf_);
 
-  if (has_dex1_input_) {
-    std::copy_n(raw_output_.begin() + joint_ids_map_.size(), dex1_action_.size(),
-                dex1_action_.begin());
-    actions_.at("Dex1Action").process(dex1_action_);
-    if (dex1_device_->isPositionMode()) {
-      dex1_device_->publishPosition(dex1_action_);
-    } else {
-      dex1_device_->publishTorque(dex1_action_);
-    }
-  }
+  logPolicyFrame(loop_cnt, ll_dt);
+
   has_valid_output_ = true;
 }
 
+void PolicySlot::logPolicyFrame(size_t loop_cnt, double ll_dt) {
+  CsvLogger& logger = CsvLogger::getInstance();
+  const double time_sec = static_cast<double>(loop_cnt) * ll_dt;
+
+  for (size_t i = 0; i < input_buf_.size(); ++i) {
+    logger.update(time_sec, "policy_obs_" + std::to_string(i),
+                  static_cast<double>(input_buf_[i]));
+  }
+  for (size_t i = 0; i < dex1_policy_input_.size(); ++i) {
+    logger.update(time_sec, "policy_dex1_" + std::to_string(i),
+                  static_cast<double>(dex1_policy_input_[i]));
+  }
+  for (size_t i = 0; i < raw_output_.size(); ++i) {
+    logger.update(time_sec, "policy_output_" + std::to_string(i),
+                  static_cast<double>(raw_output_[i]));
+  }
+  for (size_t i = 0; i < output_buf_.size(); ++i) {
+    logger.update(time_sec, "action_output_" + std::to_string(i),
+                  static_cast<double>(output_buf_[i]));
+  }
+}
+
 void PolicySlot::initializeHistoryFromCurrentFrame() {
-  const size_t expected_frame_size =
-      history_frame_dim_ != 0
-          ? history_frame_dim_
-          : (has_dex1_input_ ? 101 : input_buf_.size());
+  const size_t expected_frame_size = history_frame_dim_ != 0
+                                         ? history_frame_dim_
+                                         : input_buf_.size();
   std::vector<float> frame;
   frame.reserve(expected_frame_size);
 
   if (has_dex1_input_) {
-    if (input_buf_.size() < 66) {
-      throw std::runtime_error("observations are too small for Dex1 history initialization");
-    }
     frame.insert(frame.end(), input_buf_.begin(), input_buf_.begin() + 66);
-    if (expected_frame_size == 103) {
-      for (size_t i = 0; i < dex1_input_.size(); ++i) {
-        frame.push_back(
-            (dex1_input_[i] - (i < kDex1Dof ? 1.697f : 0.0f)) *
-            kDex1ObservationScaleWithPosition[i]);
-      }
-    } else if (expected_frame_size == 101) {
-      for (size_t i = 2; i < dex1_input_.size(); ++i) {
-        frame.push_back(dex1_input_[i] * kDex1ObservationScale[i - 2]);
-      }
-    } else {
-      throw std::runtime_error(
-          "Dex1 policy history must have 101 or 103 values");
+    for (size_t i = 0; i < dex1_policy_input_.size(); ++i) {
+      frame.push_back(dex1_policy_input_[i] * kDex1ObservationScale[i]);
     }
     frame.insert(frame.end(), input_buf_.begin() + 66, input_buf_.end());
   } else {

@@ -90,6 +90,7 @@ private:
   void updatePolicy(const LeggedState& state,
                     const unitree::common::Gamepad& gamepad, size_t loop_cnt,
                     double ll_dt);
+  void logPolicyFrame(size_t loop_cnt, double ll_dt);
   void initializeHistoryFromCurrentFrame();
   const ObsTerm& getObsTermByName(const std::string& name) const;
   static ObsOrderSpec parseOrderSpec(const YAML::Node& node);
@@ -111,8 +112,8 @@ private:
   std::vector<float> input_buf_;
   std::vector<float> output_buf_;
   std::vector<float> raw_output_;
-  std::array<float, 6> dex1_input_{};
-  std::vector<float> dex1_action_;
+  std::array<float, 6> dex1_state_{};
+  std::array<float, 2> dex1_policy_input_{};
   std::vector<RuntimeTensor> runtime_inputs_;
   std::unordered_map<std::string, std::vector<float>> external_input_buffers_;
   std::unordered_map<std::string, std::unique_ptr<RosImageTensorInput>> external_inputs_;

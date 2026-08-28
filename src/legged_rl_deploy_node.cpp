@@ -1,9 +1,30 @@
 
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+
 #include <yaml-cpp/yaml.h>
 #include <rclcpp/rclcpp.hpp>
 
 #include "legged_rl_deploy/legged_rl_deploy.h"
 #include <logger/CsvLogger.h>
+
+namespace {
+
+std::string datedLogPath(const std::string& directory) {
+  const auto now = std::chrono::system_clock::now();
+  const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+  std::tm local_time{};
+  localtime_r(&now_time, &local_time);
+
+  std::ostringstream filename;
+  filename << "data_" << std::put_time(&local_time, "%Y-%m-%d_%H-%M-%S")
+           << ".csv";
+  return directory + filename.str();
+}
+
+}  // namespace
 
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
@@ -25,8 +46,10 @@ int main(int argc, char* argv[]) {
   auto llc_config_file = legged_base::getEnv("WORKSPACE") + "/" + configNode["llc_config_file"].as<std::string>();
   auto llc_config_node = YAML::LoadFile(llc_config_file);
 
-  std::string log_path;
-  log_path = legged_base::getEnv("WORKSPACE") + "/" + llc_config_node["log_path"].as<std::string>() + "data.csv";
+  const std::string log_directory =
+      legged_base::getEnv("WORKSPACE") + "/" +
+      llc_config_node["log_path"].as<std::string>();
+  const std::string log_path = datedLogPath(log_directory);
 
   CsvLogger& csvLogger = CsvLogger::getInstance();
   csvLogger.setCsvPath(log_path);

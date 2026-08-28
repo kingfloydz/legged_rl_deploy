@@ -123,7 +123,12 @@ void LeggedRLDeploy::updateFixStand() {
 
 void LeggedRLDeploy::updateGripperLoading() {
   if (dex1_) {
-    dex1_->publishTorque({-40.0f, -40.0f});
+    if (dex1_->isPositionMode()) {
+      dex1_->publishPosition(
+          {dex1_target_position_rad_, dex1_target_position_rad_});
+    } else {
+      dex1_->publishTorque({-40.0f, -40.0f});
+    }
   }
 }
 
@@ -159,6 +164,10 @@ void LeggedRLDeploy::initHighController() {
   }
   if (configNode_["dex1"]) {
     dex1_ = std::make_unique<Dex1Device>(configNode_["dex1"], *this);
+    if (dex1_->isPositionMode()) {
+      dex1_target_position_rad_ =
+          configNode_["dex1"]["target_position_rad"].as<float>();
+    }
     std::cout << "[LeggedRLDeploy] Dex1-1 enabled." << std::endl;
   }
 
@@ -290,6 +299,11 @@ void LeggedRLDeploy::updateHighController() {
     safetyFlag = false;
     eStop();
     return;
+  }
+
+  if (dex1_ && dex1_->isPositionMode()) {
+    dex1_->publishPosition(
+        {dex1_target_position_rad_, dex1_target_position_rad_});
   }
 
   // 3) Write joint commands from active slot's output

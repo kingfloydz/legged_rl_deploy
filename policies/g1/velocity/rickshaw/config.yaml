@@ -2,7 +2,8 @@ llc_config_file: src/unitree_lowlevel/config/g1_rickshaw.yaml
 ll_dt: 0.002
 
 dex1:
-  action_mode: torque
+  action_mode: position
+  target_position_rad: 2.5
   torque_limit_nm: 5.0
   kp: [5.0, 5.0]
   kd: [0.1, 0.1]
@@ -21,10 +22,9 @@ policy:
   model:
     states:
       history:
-        shape: [1, 61, 101]
+        shape: [1, 61, 97]
         initialization: reset_pose
-        # Reset observation: upright G1 at flat_reset_pose, stationary commands,
-        # and the calibrated Dex1 reset velocity/torque.
+        # Reset observation: upright G1 at flat_reset_pose and stationary commands.
         reset_frame: [
           0, 0, 0, 0, 0, -1, 0, 0,
           0, 0, 0, 0, 0, 0, 0, 0,
@@ -34,25 +34,25 @@ policy:
           0, 0, 0, 0, 0, 0, 0, 0,
           0, 0, 0, 0, 0, 0, 0, 0,
           0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, -0.08, -0.08,
           0, 0, 0, 0, 0, 0, 0, 0,
           0, 0, 0, 0, 0, 0, 0, 0,
           0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0
         ]
     inputs:
       - name: observations
         source: observations
-        shape: [1, 97]
+        shape: [1, 95]
       - name: dex1
         source: external.dex1
-        shape: [1, 6]
+        shape: [1, 2]
       - name: history
         source: state.history
     outputs:
       - name: action
         target: actions
-        shape: [1, 31]
+        shape: [1, 29]
       - name: history_next
         target: state.history
 
@@ -75,7 +75,7 @@ policy:
   commands:
     base_velocity:
       process_order: [clip]
-      min: [-1.0, -0.5]
+      min: [-0.5, -0.5]
       max: [1.0, 0.5]
 
   actions:
@@ -91,13 +91,6 @@ policy:
                0.0, 0.0, 0.0,
                0.3720904162779385, 0.2131045653285747, -0.07004787499653656, 0.3922743944994819, -1.7385463616919066, 0.10297489997860972, -1.0199937822749605,
                0.3720904162779385, -0.2131045653285747, 0.07004787499653656, 0.3922743944994819, 1.7385463616919066, 0.10297489997860972, 1.0199937822749605]
-    Dex1Action:
-      process_order: [clip, scale, offset]
-      min: [-1.0, -1.0]
-      max: [1.0, 1.0]
-      scale: [125.0, 125.0]
-      offset: [0.0, 0.0]
-
   observations:
     terms:
       base_ang_vel_B:

@@ -45,6 +45,7 @@ private:
 
   // -------- optional Dex1-1 device --------
   std::unique_ptr<Dex1Device> dex1_;
+  float dex1_target_position_rad_ = 2.5f;
 };
 
 } // namespace legged_rl_deploy
