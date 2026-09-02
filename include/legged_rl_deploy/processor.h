@@ -11,7 +11,7 @@ namespace legged_rl_deploy {
 
 class Processor {
 public:
-  enum class Op { Clip, Scale, Offset };
+  enum class Op { Clip, MapRange, Scale, Offset };
 
   // ---------------- load ----------------
   static std::optional<Processor> TryLoad(const YAML::Node& node) {
@@ -30,11 +30,17 @@ public:
       if (seen.count(op)) continue;
       seen.insert(op);
 
-      if (op == Op::Clip) {
+      if (op == Op::Clip || op == Op::MapRange) {
         p.min_ = Load(node["min"]);
         p.max_ = Load(node["max"]);
         if (p.min_.empty() || p.max_.empty() || p.min_.size() != p.max_.size())
-          throw std::runtime_error("clip requires min/max with same dim");
+          throw std::runtime_error("clip/map_range requires min/max with same dim");
+        if (op == Op::MapRange) {
+          for (std::size_t i = 0; i < p.min_.size(); ++i) {
+            if (p.min_[i] > 0.0f || p.max_[i] < 0.0f)
+              throw std::runtime_error("map_range requires min <= 0 <= max");
+          }
+        }
       } else if (op == Op::Scale) {
         p.scale_ = Load(node["scale"]);
         if (p.scale_.empty())
@@ -63,6 +69,14 @@ public:
                        Pick(min_, i, dim, "min"),
                        Pick(max_, i, dim, "max"));
       } 
+      else if (op == Op::MapRange) {
+        for (std::size_t i = 0; i < dim; ++i) {
+          const float scale = x[i] < 0.0f
+                                  ? -Pick(min_, i, dim, "min")
+                                  : Pick(max_, i, dim, "max");
+          x[i] *= scale;
+        }
+      }
       else { // Scale
         for (std::size_t i = 0; i < dim; ++i)
           x[i] *= Pick(scale_, i, dim, "scale");
@@ -82,6 +96,7 @@ private:
 
   static Op ParseOp(const std::string& s) {
     if (s == "clip")   return Op::Clip;
+    if (s == "map_range") return Op::MapRange;
     if (s == "scale")  return Op::Scale;
     if (s == "offset") return Op::Offset;
     throw std::runtime_error("unknown preprocess op: " + s);
